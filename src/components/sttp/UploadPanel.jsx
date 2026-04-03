@@ -1,289 +1,365 @@
-import { useState, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { FiUploadCloud, FiFileText, FiImage, FiFile, FiCheckCircle } from 'react-icons/fi';
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { FiUploadCloud, FiFileText, FiImage, FiFile, FiCheckCircle, FiArrowRight, FiArrowLeft, FiBookOpen } from 'react-icons/fi';
+import { useNavigate } from 'react-router-dom';
+import LoadingOverlay from './LoadingOverlay';
+import { extractTextFromImage } from '../../services/ocrService';
+import { extractTextFromPDF } from '../../services/pdfService';
+import { parseCSV, calculateOverallMetrics } from '../../services/csvParserService';
+import { evaluateAnswer } from '../../services/ragEvaluationService';
+import { indexDocument } from '../../services/vectorService';
+import { generateRecommendations } from '../../services/recommendationService';
+import { generateRevisionPlan } from '../../services/llmService';
+import { saveTestAttempt } from '../../services/firebaseService';
 
 export default function UploadPanel() {
+  const [step, setStep] = useState('upload-syllabus'); // 'upload-syllabus' | 'upload-sheet'
+  
+  // Syllabus state
+  const [syllabusFiles, setSyllabusFiles] = useState([]);
+  const [textbookChunksCount, setTextbookChunksCount] = useState(0);
+  
+  // Sheet state
   const [dragActive, setDragActive] = useState(false);
   const [files, setFiles] = useState([]);
+  
+  // Analyzing state
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
+  
   const fileInputRef = useRef(null);
+  const syllabusInputRef = useRef(null);
+  const navigate = useNavigate();
 
+  // ── File upload helpers ──
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
+    if (e.type === 'dragenter' || e.type === 'dragover') setDragActive(true);
+    else if (e.type === 'dragleave') setDragActive(false);
   };
 
-  const handleDrop = (e) => {
+  const handleSyllabusDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    setFiles((prev) => [...prev, ...droppedFiles]);
+    setSyllabusFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
   };
 
-  const handleChange = (e) => {
-    const selectedFiles = Array.from(e.target.files);
-    setFiles((prev) => [...prev, ...selectedFiles]);
+  const handleSheetDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    setFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
   };
 
   const getFileIcon = (fileName) => {
-    if (fileName.endsWith('.csv')) return <FiFileText className="text-blue-400" />;
+    if (fileName.endsWith('.csv')) return <FiFileText className="text-blue-400 text-2xl" />;
     if (['.png', '.jpg', '.jpeg'].some((ext) => fileName.endsWith(ext)))
-      return <FiImage className="text-green-400" />;
-    if (fileName.endsWith('.pdf')) return <FiFile className="text-red-400" />;
-    return <FiFile className="text-gray-400" />;
+      return <FiImage className="text-green-400 text-2xl" />;
+    if (fileName.endsWith('.pdf')) return <FiFile className="text-red-400 text-2xl" />;
+    return <FiFile className="text-gray-400 text-2xl" />;
   };
 
-  const removeFile = (index) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
+  // ── Step 1: Process Syllabus (Vector Indexing) ──
+  const handleProcessSyllabus = async () => {
+    if (syllabusFiles.length === 0) return;
+    setIsAnalyzing(true);
+    
+    try {
+      setLoadingMessage('Extracting text from textbook/syllabus...');
+      let combinedText = '';
+      
+      for (const file of syllabusFiles) {
+        if (file.type === 'application/pdf') {
+          const result = await extractTextFromPDF(file);
+          combinedText += ' ' + result.extractedText;
+        } else if (file.type.startsWith('image/')) {
+          const result = await extractTextFromImage(file);
+          combinedText += ' ' + result.rawText;
+        }
+      }
+      
+      setLoadingMessage('Converting textbook into mathematical Brain Vectors...');
+      
+      const totalIndexed = await indexDocument(combinedText, (current, total) => {
+         setLoadingMessage(`Storing Embeddings (Chunk ${current} of ${total})...`);
+      });
+      
+      if (totalIndexed === 0) {
+        alert("We couldn't detect enough text to index. Please upload a clearer file.");
+        setIsAnalyzing(false);
+        return;
+      }
+      
+      setTextbookChunksCount(totalIndexed);
+      setIsAnalyzing(false);
+      setStep('upload-sheet');
+      
+    } catch(err) {
+      console.error(err);
+      alert('Failed to process. Make sure Ollama is running. Error: ' + err.message);
+      setIsAnalyzing(false);
+    }
   };
 
-  return (
-    <section
-      id="upload"
-      className="w-full relative min-h-[80vh] pt-16 pb-16 px-4 sm:px-6 lg:px-8 flex flex-col justify-center"
-      style={{
-        background:
-          'radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,110,0,0.18), transparent 70%), radial-gradient(ellipse 60% 60% at 80% 100%, rgba(139,92,246,0.12), transparent 70%), transparent',
-      }}
+  // ── Step 2: Validate Answer Sheet Contextually (RAG) ──
+  const handleAnalyzeSheet = async () => {
+    if (files.length === 0 || textbookChunksCount === 0) return;
+    setIsAnalyzing(true);
+
+    try {
+      let combinedText = '';
+      let csvData = null;
+      let overallMetrics = null;
+
+      for (const file of files) {
+        setLoadingMessage(`Extracting text from ${file.name}...`);
+
+        if (file.name.endsWith('.csv')) {
+          csvData = await parseCSV(file);
+          overallMetrics = calculateOverallMetrics(csvData);
+        } else if (file.type.startsWith('image/')) {
+          const ocrResult = await extractTextFromImage(file);
+          combinedText += ' ' + ocrResult.rawText;
+        } else if (file.type === 'application/pdf') {
+          const pdfResult = await extractTextFromPDF(file);
+          combinedText += ' ' + pdfResult.extractedText;
+        }
+      }
+
+      setLoadingMessage('Searching textbook to evaluate student answers...');
+      let analysis = { weakTopics: [], missingConcepts: [], overallFeedback: '' };
+
+      if (combinedText) {
+        // Feed the student's answer to the RAG Semantic Grader
+        analysis = await evaluateAnswer(combinedText);
+      }
+
+      setLoadingMessage('Generating tailored recommendations...');
+      const recommendations = generateRecommendations(analysis.weakTopics || []);
+
+      setLoadingMessage('Creating AI-powered study plan...');
+      // Safe fallback if student didn't miss anything (perfect score)
+      const topicsToPlan = analysis.weakTopics.length > 0 
+         ? analysis.weakTopics 
+         : [{ topic: 'Advanced Applications', weaknessLevel: 'Low' }];
+         
+      const revisionPlan = await generateRevisionPlan(topicsToPlan, recommendations);
+
+      setLoadingMessage('Saving your results...');
+      const testData = {
+        fileType: files[0].name.split('.').pop(),
+        rawData: { text: combinedText, csv: csvData },
+        selectedTopics: analysis.weakTopics.map(t => t.topic),
+        overallScore: analysis.score || overallMetrics?.overallPercentage || 0,
+        totalMarksObtained: overallMetrics?.totalMarksObtained || 0,
+        totalMarksAvailable: overallMetrics?.maxMarks || 0,
+        weakConcepts: analysis.weakTopics || [],
+        missingConcepts: analysis.missingConcepts || [],
+        overallFeedback: analysis.overallFeedback || '',
+        recommendations: recommendations || [],
+        revisionPlan: revisionPlan || [],
+      };
+
+      const docId = await saveTestAttempt('Demo Student', 'student@example.com', testData);
+
+      setLoadingMessage('Done! Redirecting to dashboard...');
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        navigate(`/analysis?id=${docId}`);
+      }, 1000);
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      setIsAnalyzing(false);
+      alert('Analysis failed: ' + error.message);
+    }
+  };
+
+  // ────────────────────────────────────────────
+  // UI STEP 1: Syllabus Upload
+  // ────────────────────────────────────────────
+  const renderSyllabusUpload = () => (
+    <motion.div
+      key="step1"
+      initial={{ opacity: 0, x: -40 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 40 }}
+      transition={{ duration: 0.4 }}
+      className="w-full max-w-xl mx-auto"
     >
-      {/* Decorative blobs */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-orange-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-24 right-1/4 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl" />
+      {/* Step indicator */}
+      <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-orange-500 text-white font-bold text-sm flex items-center justify-center">1</div>
+          <span className="text-white font-semibold text-sm">Upload Portions</span>
+        </div>
+        <div className="flex-1 h-px bg-gray-700" />
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-gray-700 text-gray-400 font-bold text-sm flex items-center justify-center">2</div>
+          <span className="text-gray-400 font-semibold text-sm">Upload Sheet</span>
+        </div>
       </div>
 
-      {/* ── Centered content column ── */}
-      <div className="relative z-10 w-full max-w-md mx-auto flex flex-col items-center">
+      <div className="text-center mb-6">
+        <h1 className="text-3xl font-black text-white mb-2">
+          Upload Your{' '}
+          <span className="bg-gradient-to-r from-orange-400 to-yellow-300 bg-clip-text text-transparent">
+            Exam Syllabus
+          </span>
+        </h1>
+        <p className="text-gray-400 text-sm">Supply the course portions (PDF/Images) so the AI learns what to look for.</p>
+      </div>
 
-        {/* ── Hero heading ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7 }}
-          className="w-full text-center mb-8"
-        >
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black leading-tight mb-4 tracking-tight">
-            <span className="text-white">Upload Your </span>
-            <span className="bg-gradient-to-r from-orange-400 via-orange-500 to-yellow-300 bg-clip-text text-transparent">
-              Exam Data
+      <motion.div
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleSyllabusDrop}
+        className={`rounded-3xl border-2 transition-all duration-300 mb-6 ${
+          dragActive ? 'border-orange-400 shadow-2xl shadow-orange-500/30 bg-orange-950/30' : 'border-gray-700/60 bg-gray-900/40 hover:border-orange-500/40'
+        }`}
+      >
+        <div className="py-10 px-6 flex flex-col items-center gap-4">
+          <FiBookOpen className="text-6xl text-orange-400 drop-shadow-xl" />
+          <div className="text-center">
+            <p className="text-white font-bold text-lg">Drag & drop your syllabus</p>
+            <p className="text-gray-400 text-sm mt-1">or <span onClick={() => syllabusInputRef.current?.click()} className="text-orange-400 font-semibold cursor-pointer hover:underline">click to browse</span></p>
+          </div>
+        </div>
+        <input ref={syllabusInputRef} type="file" multiple accept=".pdf,.png,.jpg" onChange={(e) => setSyllabusFiles((prev) => [...prev, ...Array.from(e.target.files)])} className="hidden" />
+      </motion.div>
+
+      {syllabusFiles.length > 0 && (
+        <div className="space-y-3 mb-6">
+          {syllabusFiles.map((file, index) => (
+            <div key={index} className="flex justify-between items-center bg-gray-900/60 border border-gray-700/60 p-3 rounded-xl">
+              <div className="flex gap-3 items-center">
+                {getFileIcon(file.name)}
+                <div><p className="text-white text-sm truncate w-40">{file.name}</p></div>
+              </div>
+              <button onClick={() => removeSyllabusFile(index)} className="text-red-400 text-xs hover:underline">Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <motion.button
+        onClick={handleProcessSyllabus}
+        disabled={syllabusFiles.length === 0 || isAnalyzing}
+        className="w-full py-4 bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold rounded-2xl shadow-xl transition-all flex items-center justify-center gap-2 hover:scale-105 disabled:opacity-40 disabled:scale-100"
+      >
+        Process Syllabus <FiArrowRight />
+      </motion.button>
+    </motion.div>
+  );
+
+  // ────────────────────────────────────────────
+  // UI STEP 2: Answer Sheet Upload
+  // ────────────────────────────────────────────
+  const renderSheetUpload = () => {
+    return (
+      <motion.div
+        key="step2"
+        initial={{ opacity: 0, x: 40 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: -40 }}
+        transition={{ duration: 0.4 }}
+        className="w-full max-w-xl mx-auto"
+      >
+        <div className="flex items-center gap-3 mb-6">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-green-500 text-white font-bold text-sm flex items-center justify-center"><FiCheckCircle /></div>
+            <span className="text-green-400 font-semibold text-sm">Indexed</span>
+          </div>
+          <div className="flex-1 h-px bg-orange-500/60" />
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-orange-500 text-white font-bold text-sm flex items-center justify-center">2</div>
+            <span className="text-white font-semibold text-sm">Upload Sheet</span>
+          </div>
+        </div>
+
+        <button onClick={() => setStep('upload-syllabus')} className="flex items-center gap-1 text-gray-400 hover:text-white text-sm mb-5">
+          <FiArrowLeft /> Resubmit Portions
+        </button>
+
+        <div className="text-center mb-6">
+          <h1 className="text-3xl font-black text-white mb-2">
+            Upload Your{' '}
+            <span className="bg-gradient-to-r from-orange-400 to-yellow-300 bg-clip-text text-transparent">
+              Answer Sheet
             </span>
           </h1>
-          <p className="text-gray-300 text-base md:text-lg leading-relaxed mb-2">
-            Unlock AI-powered insights from your exam performance.
-            Upload marksheets, answer sheets, and more.
+          <p className="text-green-400 font-bold text-sm bg-green-900/20 py-1 px-3 rounded-full inline-block border border-green-500/30 mb-2 mt-2">
+            Textbook converted into {textbookChunksCount} mathematical vectors!
           </p>
-          <p className="text-gray-500 text-sm">
-            Get instant analysis, weakness detection, and personalized study plans
-          </p>
-        </motion.div>
+          <p className="text-gray-400 text-xs mt-2">Supports CSV, Images (PNG/JPG), and PDF files</p>
+        </div>
 
-        {/* ── Upload Card ── */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.15 }}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
-          onDrop={handleDrop}
-          className={`w-full rounded-3xl transition-all duration-300 mb-10 ${
-            dragActive
-              ? 'border-2 border-orange-400 shadow-2xl shadow-orange-500/40 bg-gradient-to-br from-orange-950/40 to-black/60'
-              : 'border-2 border-gray-700/60 shadow-2xl shadow-black/40 bg-gradient-to-br from-gray-900/50 via-black/60 to-black/80 hover:border-orange-500/50 hover:shadow-orange-600/20'
+          onDrop={handleSheetDrop}
+          className={`rounded-3xl border-2 transition-all duration-300 mb-6 ${
+            dragActive ? 'border-orange-400 shadow-2xl shadow-orange-500/30 bg-orange-950/30' : 'border-gray-700/60 bg-gray-900/40 hover:border-orange-500/40'
           }`}
         >
-          <div className="block py-5 px-6">
-            <div className="flex flex-col items-center justify-center gap-3">
-
-              {/* Upload icon */}
-              <motion.div
-                animate={dragActive ? { scale: 1.15, rotate: 10 } : { scale: 1, rotate: 0 }}
-                transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-                className="relative"
-              >
-                <div className="absolute inset-0 bg-gradient-to-br from-orange-500 to-yellow-400 rounded-full blur-xl opacity-25" />
-                <FiUploadCloud className="text-5xl md:text-6xl text-orange-400 relative z-10 drop-shadow-xl" />
-              </motion.div>
-
-              {/* Text */}
-              <div className="text-center space-y-1">
-                <h2 className="text-xl md:text-2xl font-bold text-white">
-                  Drag &amp; drop your files
-                </h2>
-                <p className="text-gray-300 text-base">
-                  or{' '}
-                  <span onClick={() => fileInputRef.current?.click()} className="text-orange-400 font-semibold cursor-pointer hover:underline">click to browse</span>
-                </p>
-                <p className="text-xs text-gray-500">
-                  CSV, PNG, JPG, JPEG, PDF — exam data pipeline in one step
-                </p>
-              </div>
-
-              {/* File type badges */}
-              <div className="flex flex-wrap gap-2 justify-center">
-                {[
-                  { icon: '📊', label: 'CSV Sheets', color: 'from-blue-600/30' },
-                  { icon: '📸', label: 'Answer Images', color: 'from-green-600/30' },
-                  { icon: '📄', label: 'PDF Files', color: 'from-red-600/30' },
-                ].map((type, idx) => (
-                  <motion.span
-                    key={idx}
-                    whileHover={{ scale: 1.08, y: -2 }}
-                    className={`px-3 py-1.5 rounded-full bg-gradient-to-r ${type.color} to-transparent border border-gray-700/50 text-xs font-medium text-gray-200`}
-                  >
-                    {type.icon} {type.label}
-                  </motion.span>
-                ))}
-              </div>
-
-              {/* Browse Button — inside flex column so it's never clipped */}
-              <motion.button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                whileHover={{ scale: 1.05, boxShadow: '0 0 20px rgba(255,155,0,0.7)' }}
-                whileTap={{ scale: 0.97 }}
-                className="px-6 py-2.5 mt-2 rounded-full bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold shadow-lg shadow-orange-600/40 transition-all duration-300 text-sm cursor-pointer"
-              >
-                Browse Files
-              </motion.button>
+          <div className="py-10 px-6 flex flex-col items-center gap-4">
+            <FiUploadCloud className="text-6xl text-orange-400 drop-shadow-xl" />
+            <div className="text-center">
+              <p className="text-white font-bold text-lg">Drag & drop your answer sheet</p>
+              <p className="text-gray-400 text-sm mt-1">or <span onClick={() => fileInputRef.current?.click()} className="text-orange-400 font-semibold cursor-pointer hover:underline">click to browse</span></p>
             </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".csv,.png,.jpg,.jpeg,.pdf"
-              onChange={handleChange}
-              className="hidden"
-            />
           </div>
+          <input ref={fileInputRef} type="file" multiple accept=".csv,.png,.jpg,.jpeg,.pdf" onChange={(e) => setFiles((prev) => [...prev, ...Array.from(e.target.files)])} className="hidden" />
         </motion.div>
 
-        {/* ── Uploaded files list ── */}
         {files.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="w-full mb-10 space-y-4"
-          >
-            <h3 className="text-xl font-bold text-white flex items-center gap-2">
-              <FiCheckCircle className="text-green-400" />
-              Uploaded Files ({files.length})
-            </h3>
-            <div className="space-y-3">
-              {files.map((file, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.08 }}
-                  whileHover={{ x: 6 }}
-                  className="flex items-center justify-between bg-gray-900/60 border border-gray-700/60 rounded-2xl p-4 hover:border-orange-500/40 transition-all duration-300"
-                >
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="text-2xl">{getFileIcon(file.name)}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold truncate">{file.name}</p>
-                      <p className="text-gray-400 text-xs">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
+          <div className="space-y-3 mb-6">
+            {files.map((file, index) => (
+              <div key={index} className="flex justify-between items-center bg-gray-900/60 border border-gray-700/60 p-3 rounded-xl">
+                <div className="flex gap-3 items-center">
+                  {getFileIcon(file.name)}
+                  <div>
+                    <p className="text-white text-sm truncate w-40">{file.name}</p>
+                    <p className="text-gray-500 text-xs">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                   </div>
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => removeFile(index)}
-                    className="px-3 py-1.5 text-red-400 hover:bg-red-500/20 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    Remove
-                  </motion.button>
-                </motion.div>
-              ))}
-            </div>
-
-            <motion.button
-              whileHover={{ scale: 1.02, boxShadow: '0 0 40px rgba(255,107,0,0.8)' }}
-              whileTap={{ scale: 0.98 }}
-              className="w-full mt-4 py-4 bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold rounded-2xl shadow-xl shadow-orange-600/50 transition-all duration-300 text-base"
-            >
-              Analyze Now
-            </motion.button>
-          </motion.div>
+                </div>
+                <button onClick={() => removeFile(index)} className="text-red-400 text-xs hover:underline">Remove</button>
+              </div>
+            ))}
+          </div>
         )}
 
-        {/* ── AI-Powered Features ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="w-full mb-10"
+        <motion.button
+          onClick={handleAnalyzeSheet}
+          disabled={files.length === 0 || isAnalyzing}
+          className="w-full py-4 bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold rounded-2xl shadow-xl transition-all hover:scale-105 flex items-center justify-center disabled:opacity-40 disabled:scale-100"
         >
-          <h2 className="text-2xl md:text-3xl font-bold text-white text-center mb-8">
-            AI-Powered Features
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { icon: '📊', title: 'CSV Analysis', desc: 'Auto-parse exam scorecards' },
-              { icon: '📷', title: 'OCR Detection', desc: 'Extract handwritten answers' },
-              { icon: '🧠', title: 'Weakness AI', desc: 'Spot concept gaps instantly' },
-              { icon: '🎯', title: 'Study Plans', desc: 'Personalized revision paths' },
-            ].map((feature, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.1, duration: 0.4 }}
-                whileHover={{ y: -6 }}
-                className="group relative rounded-2xl border border-gray-700/50 bg-gradient-to-br from-gray-900/60 to-black/70 p-5 text-center hover:border-orange-500/40 transition-all duration-300"
-              >
-                <div className="text-4xl mb-2">{feature.icon}</div>
-                <h3 className="text-sm font-bold text-white mb-1">{feature.title}</h3>
-                <p className="text-xs text-gray-400">{feature.desc}</p>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+          {isAnalyzing ? 'Analyzing...' : `Analyze Answer Sheet`}
+        </motion.button>
+      </motion.div>
+    );
+  };
 
-        {/* ── Quick Stats ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="w-full"
-        >
-          <h2 className="text-2xl md:text-3xl font-bold text-white text-center mb-8">
-            Quick Stats
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { label: 'Tests Analyzed', value: '14' },
-              { label: 'Weak Concepts', value: '8' },
-              { label: 'Progress', value: '63%' },
-              { label: 'Recommendations', value: '27' },
-            ].map((stat, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, scale: 0.9 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                transition={{ delay: idx * 0.08, duration: 0.4 }}
-                whileHover={{ y: -4 }}
-                className="rounded-2xl border border-gray-700/60 bg-gradient-to-br from-gray-900/60 to-black/80 p-5 text-center hover:border-orange-500/40 transition-all duration-300"
-              >
-                <p className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold mb-2">
-                  {stat.label}
-                </p>
-                <p className="text-3xl font-black text-orange-400">{stat.value}</p>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+  // ────────────────────────────────────────────
+  // RENDER
+  // ────────────────────────────────────────────
+  return (
+    <section id="upload" className="w-full relative min-h-screen pt-20 pb-16 px-4 sm:px-6 lg:px-8 flex flex-col justify-center"
+      style={{ background: 'radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,110,0,0.15), transparent 70%), radial-gradient(ellipse 60% 60% at 80% 100%, rgba(139,92,246,0.10), transparent 70%), transparent' }}>
+      <LoadingOverlay isVisible={isAnalyzing} message={loadingMessage} />
 
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-orange-500/8 rounded-full blur-3xl" />
+        <div className="absolute bottom-24 right-1/4 w-72 h-72 bg-purple-500/8 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative z-10 w-full">
+        <AnimatePresence mode="wait">
+          {step === 'upload-syllabus' ? renderSyllabusUpload() : renderSheetUpload()}
+        </AnimatePresence>
       </div>
     </section>
   );

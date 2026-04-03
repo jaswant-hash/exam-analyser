@@ -1,57 +1,29 @@
 import { motion } from 'framer-motion';
 import { FiCheckCircle, FiClock, FiExternalLink } from 'react-icons/fi';
 
-export default function RevisionPlan() {
-  const revisionPlan = [
-    {
-      day: 'Day 1',
-      topic: 'CPU Scheduling Fundamentals',
-      duration: '4 hours',
-      concepts: ['FCFS', 'SJF', 'Round Robin'],
-      status: 'completed',
-      resource: { title: 'Advanced OS Scheduling Algorithms', type: 'Video Course', priority: 'Critical', prioClass: 'bg-red-500/20 text-red-400 border-red-500/30' }
-    },
-    {
-      day: 'Day 2',
-      topic: 'Scheduling Algorithm Analysis',
-      duration: '4 hours',
-      concepts: ['Gantt Charts', 'Average Waiting Time', 'Turnaround Time'],
-      status: 'in-progress',
-      resource: { title: 'Process Scheduling Simulator', type: 'Interactive Tool', priority: 'High', prioClass: 'bg-orange-500/20 text-orange-400 border-orange-500/30' }
-    },
-    {
-      day: 'Day 3',
-      topic: 'Memory Paging Concepts',
-      duration: '5 hours',
-      concepts: ['Virtual Memory', 'Page Replacement', 'TLB'],
-      status: 'upcoming',
-      resource: { title: 'Virtual Memory Deep Dive', type: 'Video Course', priority: 'Critical', prioClass: 'bg-red-500/20 text-red-400 border-red-500/30' }
-    },
-    {
-      day: 'Day 4',
-      topic: 'Paging Numericals',
-      duration: '4 hours',
-      concepts: ['Problem Solving', 'Practice Questions', 'Optimization'],
-      status: 'upcoming',
-      resource: { title: 'Paging Algorithms & Practice', type: 'Practice Sets', priority: 'High', prioClass: 'bg-orange-500/20 text-orange-400 border-orange-500/30' }
-    },
-    {
-      day: 'Day 5',
-      topic: 'Memory Fragmentation',
-      duration: '3 hours',
-      concepts: ['Internal', 'External', 'Compaction'],
-      status: 'upcoming',
-      resource: { title: 'Memory Fragmentation Visualization', type: 'Interactive Tool', priority: 'Medium', prioClass: 'bg-green-500/20 text-green-400 border-green-500/30' }
-    },
-    {
-      day: 'Day 6',
-      topic: 'Final Revision & Mock Test',
-      duration: '6 hours',
-      concepts: ['Comprehensive Review', 'Mock Exam', 'Performance Analysis'],
-      status: 'upcoming',
-      resource: { title: 'Full Length OS Mock Test', type: 'Mock Exam', priority: 'High', prioClass: 'bg-orange-500/20 text-orange-400 border-orange-500/30' }
-    },
-  ];
+export default function RevisionPlan({ planData = [] }) {
+  if (!planData || planData.length === 0) return null;
+
+  // Map incoming LLM structure to UI expected format
+  const formattedPlan = planData.map((dayItem, index) => {
+    // LLM might return an array of tasks or a single string task
+    let mainTask = '';
+    if (dayItem.tasks && Array.isArray(dayItem.tasks)) {
+      mainTask = dayItem.tasks[0]?.task || 'Review concepts';
+    } else {
+      mainTask = dayItem.task || 'Review concepts';
+    }
+
+    return {
+      day: `Day ${dayItem.day || index + 1}`,
+      topic: mainTask,
+      duration: dayItem.estimatedHours ? `${dayItem.estimatedHours} hours` : '2 hours',
+      concepts: dayItem.topics || ['Fundamentals', 'Practice'],
+      status: index === 0 ? 'in-progress' : 'upcoming',
+      // Optional resource mapping if available
+      resource: dayItem.resource || null
+    };
+  });
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -120,16 +92,16 @@ export default function RevisionPlan() {
             {/* Completed Line (Green) */}
             <motion.div
               initial={{ height: 0 }}
-              whileInView={{ height: `${(revisionPlan.filter(p => p.status === 'completed').length / revisionPlan.length) * 100}%` }}
+              whileInView={{ height: `${(formattedPlan.filter(p => p.status === 'completed').length / formattedPlan.length) * 100}%` }}
               transition={{ duration: 1.5, ease: "easeInOut", delay: 0.5 }}
               className="absolute top-0 left-0 w-full bg-gradient-to-b from-green-500/0 via-green-500 to-green-400 shadow-[0_0_15px_rgba(34,197,94,0.5)]"
             />
 
             {/* In-Progress Segment (Orange) */}
             <motion.div
-              initial={{ height: 0, top: `${(revisionPlan.filter(p => p.status === 'completed').length / revisionPlan.length) * 100}%` }}
+              initial={{ height: 0, top: `${(formattedPlan.filter(p => p.status === 'completed').length / formattedPlan.length) * 100}%` }}
               whileInView={{ 
-                height: revisionPlan.some(p => p.status === 'in-progress') ? `${(1 / revisionPlan.length) * 100}%` : 0 
+                height: formattedPlan.some(p => p.status === 'in-progress') ? `${(1 / formattedPlan.length) * 100}%` : 0 
               }}
               transition={{ duration: 1, ease: "easeInOut", delay: 2 }}
               className="absolute left-0 w-full bg-gradient-to-b from-orange-500 via-orange-400 to-orange-500 shadow-[0_0_20px_rgba(255,107,0,0.6)] animate-pulse"
@@ -137,7 +109,7 @@ export default function RevisionPlan() {
           </div>
 
           <div className="space-y-8">
-            {revisionPlan.map((plan, index) => {
+            {formattedPlan.map((plan, index) => {
               const statusColor = getStatusColor(plan.status);
               const isEven = index % 2 === 0;
 

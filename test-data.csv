@@ -1,0 +1,11 @@
+Question,Topic,Marks,Total
+Q1 - What is FCFS?,CPU Scheduling,0,5
+Q2 - Explain Round Robin,CPU Scheduling,1,5
+Q3 - What is time quantum?,CPU Scheduling,0,5
+Q4 - Define Page Fault,Paging,1,5
+Q5 - Explain page table,Paging,0,5
+Q6 - What is TLB?,Paging,0,5
+Q7 - Define Deadlock,Deadlock,4,5
+Q8 - Bankers Algorithm,Deadlock,3,5
+Q9 - What is fragmentation?,Memory Management,0,5
+Q10 - Explain virtual memory,Memory Management,1,5
