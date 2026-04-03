@@ -15,7 +15,7 @@ export default function Navbar() {
     <nav className="fixed top-0 w-full z-50 glass-panel border-b-0 border-x-0 rounded-none rounded-b-3xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
-          <Link to="/" className="flex items-center space-x-2">
+          <Link to="/" onClick={() => window.scrollTo(0,0)} className="flex items-center space-x-2">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-orange to-brand-amber flex items-center justify-center shadow-[0_0_15px_rgba(255,107,0,0.5)]">
               <Activity className="text-white w-6 h-6" />
             </div>

@@ -10,12 +10,12 @@ function App() {
     <Router>
       <div className="min-h-screen pt-20">
         <Navbar />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="w-full">
           <Routes>
-             <Route path="/" element={<Landing />} />
-             <Route path="/dashboard" element={<Dashboard />} />
-             <Route path="/upload" element={<Upload />} />
-             <Route path="/analysis" element={<Analysis />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/upload" element={<Upload />} />
+            <Route path="/analysis" element={<Analysis />} />
           </Routes>
         </main>
       </div>
