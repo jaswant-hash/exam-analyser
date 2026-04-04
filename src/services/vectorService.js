@@ -21,36 +21,43 @@ const cosineSimilarity = (vecA, vecB) => {
 
 /**
  * Split text into semantic chunks for vectorization
+ * Improved to respect sentence boundaries and prevent "cut-off" context.
  * @param {string} text - Raw text
  * @returns {Array<string>} Chunks of text
  */
-const chunkText = (text, maxLength = 1000) => {
+const chunkText = (text, maxLength = 800) => {
+  if (!text) return [];
+  
   const chunks = [];
-  // Split by paragraphs first
-  const paragraphs = text.split(/\n\s*\n/);
+  // Split by common sentence terminators followed by space/newline
+  const segments = text.split(/(?<=[.!?])\s+(?=[A-Z])|(?<=\n)\s*(?=\n)/);
   
-  let currentChunk = '';
+  let currentChunk = "";
   
-  for (const p of paragraphs) {
-    if ((currentChunk + p).length < maxLength) {
-      currentChunk += p + '\n\n';
+  for (const segment of segments) {
+    const cleanSegment = segment.trim();
+    if (!cleanSegment) continue;
+
+    // If adding this segment exceeds limit, push current and start new
+    if ((currentChunk + " " + cleanSegment).length > maxLength && currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+      currentChunk = cleanSegment;
     } else {
-      if (currentChunk) chunks.push(currentChunk.trim());
-      // If a single paragraph is larger than maxLength, force chunk it
-      if (p.length >= maxLength) {
-        let i = 0;
-        while (i < p.length) {
-          chunks.push(p.substring(i, i + maxLength));
-          i += maxLength;
-        }
-        currentChunk = '';
-      } else {
-        currentChunk = p + '\n\n';
+      currentChunk = currentChunk ? currentChunk + " " + cleanSegment : cleanSegment;
+    }
+
+    // If a single segment is still too long (rare but possible), force split it
+    if (currentChunk.length > maxLength) {
+      let i = 0;
+      while (i < currentChunk.length) {
+        chunks.push(currentChunk.substring(i, i + maxLength));
+        i += maxLength;
       }
+      currentChunk = "";
     }
   }
-  if (currentChunk) chunks.push(currentChunk.trim());
   
+  if (currentChunk) chunks.push(currentChunk.trim());
   return chunks;
 };
 

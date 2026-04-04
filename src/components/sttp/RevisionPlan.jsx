@@ -1,280 +1,331 @@
-import { motion } from 'framer-motion';
-import { FiCheckCircle, FiClock, FiExternalLink } from 'react-icons/fi';
+import { motion, AnimatePresence } from 'framer-motion';
+import { FiCheckCircle, FiClock, FiExternalLink, FiBookOpen, FiPlay, FiTarget, FiDownload } from 'react-icons/fi';
+import { useState } from 'react';
 
-export default function RevisionPlan({ planData = [] }) {
-  if (!planData || planData.length === 0) return null;
+/* ── Resource Card ───────────────────────────────── */
+function ResourceCard({ resource }) {
+  if (!resource) return null;
 
-  // Map incoming LLM structure to UI expected format
-  const formattedPlan = planData.map((dayItem, index) => {
-    // LLM might return an array of tasks or a single string task
-    let mainTask = '';
-    if (dayItem.tasks && Array.isArray(dayItem.tasks)) {
-      mainTask = dayItem.tasks[0]?.task || 'Review concepts';
-    } else {
-      mainTask = dayItem.task || 'Review concepts';
-    }
-
-    return {
-      day: `Day ${dayItem.day || index + 1}`,
-      topic: mainTask,
-      duration: dayItem.estimatedHours ? `${dayItem.estimatedHours} hours` : '2 hours',
-      concepts: dayItem.topics || ['Fundamentals', 'Practice'],
-      status: index === 0 ? 'in-progress' : 'upcoming',
-      // Optional resource mapping if available
-      resource: dayItem.resource || null
-    };
-  });
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'completed':
-        return { bg: 'from-green-600 to-green-900', text: 'text-green-400', icon: '✓' };
-      case 'in-progress':
-        return { bg: 'from-orange-600 to-orange-950', text: 'text-orange-400', icon: '●' };
-      case 'upcoming':
-        return { bg: 'from-gray-700 to-gray-900', text: 'text-gray-400', icon: '○' };
-      default:
-        return { bg: 'from-gray-700 to-gray-900', text: 'text-gray-400', icon: '○' };
-    }
-  };
-
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: { staggerChildren: 0.1 },
-    },
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, x: -30 },
-    visible: { opacity: 1, x: 0, transition: { duration: 0.5 } },
-  };
+  const isYoutube = resource.url?.includes('youtube');
+  const Icon = isYoutube ? FiPlay : FiBookOpen;
+  const gradient = isYoutube
+    ? 'from-red-500/15 to-rose-500/5 border-red-500/20 hover:border-red-400/40'
+    : 'from-blue-500/15 to-sky-500/5 border-blue-500/20 hover:border-blue-400/40';
+  const iconColor = isYoutube ? 'text-red-400 bg-red-500/15' : 'text-blue-400 bg-blue-500/15';
 
   return (
-    <section className="relative min-h-screen pt-20 pb-20 px-4">
-      {/* Background Effects */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/3 right-0 w-80 h-80 bg-orange-600/10 rounded-full blur-3xl"></div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className={`mt-4 flex items-center gap-4 p-3.5 rounded-2xl border bg-gradient-to-br ${gradient} transition-all duration-300 group`}
+    >
+      <div className={`p-2.5 rounded-xl shrink-0 ${iconColor}`}>
+        <Icon size={16} />
       </div>
-
-      <div className="relative max-w-5xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="mb-16"
-        >
-          <h2 className="text-5xl md:text-6xl font-bold text-white mb-4">
-            Your Personalized{' '}
-            <span className="bg-gradient-to-r from-orange-500 to-orange-300 bg-clip-text text-transparent">
-              Revision Plan
-            </span>
-          </h2>
-          <p className="text-xl text-gray-400 max-w-2xl">
-            AI-generated 6-day revision schedule tailored to your exam date and weak areas.
-          </p>
-        </motion.div>
-
-        {/* Timeline */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true }}
-          className="relative"
-        >
-          {/* Vertical Line Container */}
-          <div className="hidden md:block absolute left-1/2 transform -translate-x-1/2 w-1 h-full bg-white/10 rounded-full overflow-hidden">
-            {/* Background Line (Grey) */}
-            <div className="absolute inset-0 bg-gray-800/30"></div>
-
-            {/* Completed Line (Green) */}
-            <motion.div
-              initial={{ height: 0 }}
-              whileInView={{ height: `${(formattedPlan.filter(p => p.status === 'completed').length / formattedPlan.length) * 100}%` }}
-              transition={{ duration: 1.5, ease: "easeInOut", delay: 0.5 }}
-              className="absolute top-0 left-0 w-full bg-gradient-to-b from-green-500/0 via-green-500 to-green-400 shadow-[0_0_15px_rgba(34,197,94,0.5)]"
-            />
-
-            {/* In-Progress Segment (Orange) */}
-            <motion.div
-              initial={{ height: 0, top: `${(formattedPlan.filter(p => p.status === 'completed').length / formattedPlan.length) * 100}%` }}
-              whileInView={{ 
-                height: formattedPlan.some(p => p.status === 'in-progress') ? `${(1 / formattedPlan.length) * 100}%` : 0 
-              }}
-              transition={{ duration: 1, ease: "easeInOut", delay: 2 }}
-              className="absolute left-0 w-full bg-gradient-to-b from-orange-500 via-orange-400 to-orange-500 shadow-[0_0_20px_rgba(255,107,0,0.6)] animate-pulse"
-            />
-          </div>
-
-          <div className="space-y-8">
-            {formattedPlan.map((plan, index) => {
-              const statusColor = getStatusColor(plan.status);
-              const isEven = index % 2 === 0;
-
-              return (
-                <motion.div
-                  key={index}
-                  variants={itemVariants}
-                  className="relative"
-                >
-                  {/* Desktop Layout */}
-                  <div className="hidden md:grid md:grid-cols-[1fr_auto_1fr] gap-8 items-center">
-                    {/* Left */}
-                    <div className="flex justify-end pr-4">
-                      {isEven && (
-                        <motion.div
-                          whileHover={{ x: 10 }}
-                          className="group bg-gradient-to-br from-gray-900/50 to-black/50 border border-gray-700/50 rounded-2xl p-6 hover:border-orange-500/50 transition-all duration-300"
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-br from-orange-600/0 to-transparent rounded-2xl opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
-                          <div className="relative z-10 space-y-3">
-                            <p className="text-sm text-gray-400 font-semibold">{plan.day}</p>
-                            <h3 className="text-lg font-bold text-white">{plan.topic}</h3>
-                            <div className="flex items-center gap-2 text-gray-400 text-sm">
-                              <FiClock size={16} />
-                              {plan.duration}
-                            </div>
-                            <div className="flex flex-wrap gap-2 pt-2">
-                              {plan.concepts.map((concept, i) => (
-                                <span
-                                  key={i}
-                                  className="px-3 py-1 bg-orange-500/20 text-orange-300 rounded-full text-xs font-semibold border border-orange-500/30"
-                                >
-                                  {concept}
-                                </span>
-                              ))}
-                            </div>
-                            <ResourceCard resource={plan.resource} />
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-
-                    {/* Center Node */}
-                    <div className="flex justify-center relative z-20">
-                      <motion.div
-                        initial={{ scale: 0 }}
-                        whileInView={{ scale: 1 }}
-                        transition={{ delay: index * 0.1, duration: 0.4 }}
-                        className={`w-16 h-16 rounded-full bg-gradient-to-br ${statusColor.bg} flex items-center justify-center border-2 border-white shadow-lg shadow-orange-600/50 relative z-20`}
-                      >
-                        <span className={`text-2xl font-bold text-white`}>{statusColor.icon}</span>
-                      </motion.div>
-                    </div>
-
-                    {/* Right */}
-                    <div className="flex justify-start pl-4">
-                      {!isEven && (
-                        <motion.div
-                          whileHover={{ x: -10 }}
-                          className="group bg-gradient-to-br from-gray-900/50 to-black/50 border border-gray-700/50 rounded-2xl p-6 hover:border-orange-500/50 transition-all duration-300"
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-br from-orange-600/0 to-transparent rounded-2xl opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
-                          <div className="relative z-10 space-y-3">
-                            <p className="text-sm text-gray-400 font-semibold">{plan.day}</p>
-                            <h3 className="text-lg font-bold text-white">{plan.topic}</h3>
-                            <div className="flex items-center gap-2 text-gray-400 text-sm">
-                              <FiClock size={16} />
-                              {plan.duration}
-                            </div>
-                            <div className="flex flex-wrap gap-2 pt-2">
-                              {plan.concepts.map((concept, i) => (
-                                <span
-                                  key={i}
-                                  className="px-3 py-1 bg-orange-500/20 text-orange-300 rounded-full text-xs font-semibold border border-orange-500/30"
-                                >
-                                  {concept}
-                                </span>
-                              ))}
-                            </div>
-                            <ResourceCard resource={plan.resource} />
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Mobile Layout */}
-                  <div className="md:hidden">
-                    <div className="flex gap-4">
-                      <motion.div
-                        initial={{ scale: 0 }}
-                        whileInView={{ scale: 1 }}
-                        transition={{ delay: index * 0.1 }}
-                        className={`w-12 h-12 rounded-full bg-gradient-to-br ${statusColor.bg} flex items-center justify-center border-2 border-white flex-shrink-0 shadow-lg shadow-orange-600/50`}
-                      >
-                        <span className="text-lg font-bold text-white">{statusColor.icon}</span>
-                      </motion.div>
-                      <motion.div
-                        whileHover={{ x: 5 }}
-                        className="group flex-1 bg-gradient-to-br from-gray-900/50 to-black/50 border border-gray-700/50 rounded-2xl p-4 hover:border-orange-500/50 transition-all duration-300"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-br from-orange-600/0 to-transparent rounded-2xl opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
-                        <div className="relative z-10 space-y-2">
-                          <p className="text-sm text-gray-400 font-semibold">{plan.day}</p>
-                          <h3 className="text-base font-bold text-white">{plan.topic}</h3>
-                          <div className="flex items-center gap-2 text-gray-400 text-xs">
-                            <FiClock size={14} />
-                            {plan.duration}
-                          </div>
-                          <div className="flex flex-wrap gap-1 pt-2">
-                            {plan.concepts.map((concept, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-1 bg-orange-500/20 text-orange-300 rounded-full text-xs border border-orange-500/30"
-                              >
-                                {concept}
-                              </span>
-                            ))}
-                          </div>
-                          <ResourceCard resource={plan.resource} />
-                        </div>
-                      </motion.div>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </motion.div>
-
-        {/* Bottom CTA */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.3 }}
-          className="mt-24 mb-16 text-center"
-        >
-          <motion.button
-            whileHover={{ scale: 1.05, boxShadow: '0 0 40px rgba(255, 107, 0, 0.8)' }}
-            whileTap={{ scale: 0.95 }}
-            className="px-10 py-4 bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold rounded-xl shadow-lg shadow-orange-600/50 hover:shadow-orange-600/80 transition-all duration-300"
-          >
-            Download Plan as PDF
-          </motion.button>
-        </motion.div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-0.5">Recommended Resource</p>
+        <p className="text-sm font-semibold text-gray-200 truncate">{resource.title}</p>
+        <div className="flex gap-2 mt-1.5">
+          <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold border ${resource.prioClass || 'text-orange-400 border-orange-500/30 bg-orange-500/15'}`}>
+            {resource.priority}
+          </span>
+          <span className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-gray-400 border border-white/8 font-medium">
+            {resource.type}
+          </span>
+        </div>
       </div>
-    </section>
+      <a
+        href={resource.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 text-white text-xs font-bold shadow-lg shadow-orange-600/20 hover:shadow-orange-600/40 hover:scale-105 transition-all duration-200"
+      >
+        Open <FiExternalLink size={12} />
+      </a>
+    </motion.div>
   );
 }
 
-function ResourceCard({ resource }) {
-  if (!resource) return null;
+/* ── Day Card ─────────────────────────────────────── */
+function DayCard({ plan, index, isActive, onClick }) {
+  const statusConfig = {
+    'completed': {
+      dot: 'bg-green-500',
+      glow: 'shadow-green-500/30',
+      ring: 'border-green-500',
+      label: '✓',
+      bg: 'from-green-900/30 to-green-950/10 border-green-500/20',
+      tagBg: 'bg-green-500/15 text-green-400 border-green-500/25',
+    },
+    'in-progress': {
+      dot: 'bg-orange-500',
+      glow: 'shadow-orange-500/40',
+      ring: 'border-orange-500',
+      label: '●',
+      bg: 'from-orange-900/20 to-amber-950/10 border-orange-500/25',
+      tagBg: 'bg-orange-500/15 text-orange-400 border-orange-500/25',
+    },
+    'upcoming': {
+      dot: 'bg-gray-600',
+      glow: '',
+      ring: 'border-gray-600',
+      label: '○',
+      bg: 'from-gray-800/20 to-gray-900/10 border-gray-700/30',
+      tagBg: 'bg-gray-700/30 text-gray-400 border-gray-600/30',
+    },
+  };
+  const cfg = statusConfig[plan.status] || statusConfig.upcoming;
+
   return (
-    <div className="mt-4 p-3 bg-black/40 border border-gray-700/50 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-      <div>
-        <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-1 font-semibold">Recommended Resource</p>
-        <h4 className="text-sm font-bold text-gray-200">{resource.title}</h4>
-        <div className="flex flex-wrap gap-2 mt-2">
-          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${resource.prioClass}`}>{resource.priority}</span>
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">{resource.type}</span>
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.12, duration: 0.5 }}
+      onClick={onClick}
+      className={`cursor-pointer relative rounded-3xl border bg-gradient-to-br ${cfg.bg} p-6 hover:scale-[1.01] transition-all duration-300 group overflow-hidden ${isActive ? 'ring-1 ring-orange-500/30' : ''}`}
+    >
+      {/* Glow on hover */}
+      <div className="absolute inset-0 bg-gradient-to-br from-orange-500/0 to-transparent opacity-0 group-hover:opacity-5 transition-opacity duration-500 rounded-3xl" />
+
+      <div className="relative z-10">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: index * 0.1 + 0.2, type: 'spring' }}
+              className={`w-10 h-10 rounded-2xl border-2 ${cfg.ring} flex items-center justify-center font-black text-white text-sm shadow-lg ${cfg.glow}`}
+            >
+              <span>{cfg.label}</span>
+            </motion.div>
+            <div>
+              <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">Day {plan.day || index + 1}</p>
+              <motion.div
+                className={`mt-0.5 w-full h-0.5 rounded ${cfg.dot}`}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: 1 }}
+                transition={{ delay: index * 0.1 + 0.4, duration: 0.5 }}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 text-gray-400 text-xs bg-white/5 border border-white/8 rounded-full px-3 py-1">
+            <FiClock size={12} />
+            {plan.duration}
+          </div>
         </div>
+
+        {/* Title */}
+        <h3 className="text-base font-bold text-white mb-3 leading-snug">{plan.topic}</h3>
+
+        {/* Concept tags */}
+        {plan.concepts?.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {plan.concepts.map((c, i) => (
+              <span key={i} className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${cfg.tagBg}`}>
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Expand — Tasks */}
+        <AnimatePresence>
+          {isActive && plan.allTasks?.length > 1 && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.35 }}
+              className="overflow-hidden"
+            >
+              <div className="mb-4 space-y-1.5">
+                <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-2">All Tasks</p>
+                {plan.allTasks.map((t, i) => (
+                  <div key={i} className="flex items-start gap-2.5 text-sm text-gray-300">
+                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
+                    <span>{t}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Resource cards — primary + extras */}
+        <ResourceCard resource={plan.resource} />
+        <AnimatePresence>
+          {isActive && plan.resources?.length > 0 && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mt-4 mb-2">Also Useful</p>
+              <div className="flex flex-col gap-2">
+                {plan.resources.filter(r => r.url !== plan.resource?.url).map((r, ri) => (
+                  <a key={ri} href={r.url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/8 hover:bg-white/[0.06] hover:border-orange-500/25 transition-all text-sm text-gray-300 hover:text-white group">
+                    <span className="text-xs px-2 py-0.5 rounded bg-white/5 text-gray-500 font-bold uppercase">{r.type}</span>
+                    <span className="flex-1 truncate">{r.title}</span>
+                    <FiExternalLink size={12} className="text-gray-600 group-hover:text-orange-400 shrink-0" />
+                  </a>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-      <button className="sm:w-auto w-full px-4 py-2 bg-gradient-to-r from-orange-600 to-orange-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-orange-600/20 flex gap-2 items-center justify-center hover:scale-105 transition-transform">
-        Open <FiExternalLink size={14} />
-      </button>
-    </div>
+    </motion.div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════ */
+export default function RevisionPlan({ planData = [] }) {
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  if (!planData || planData.length === 0) return null;
+
+  /* normalise each day item */
+  const formattedPlan = planData.map((dayItem, index) => {
+    const allTasks = Array.isArray(dayItem.tasks)
+      ? dayItem.tasks.map(t => (typeof t === 'object' ? t.task : t))
+      : [dayItem.task || 'Review concepts'];
+
+    const mainTask = allTasks[0] || 'Review concepts';
+
+    return {
+      day: dayItem.day || index + 1,
+      topic: dayItem.topic || mainTask,
+      duration: dayItem.estimatedHours ? `${dayItem.estimatedHours}h` : '2h',
+      concepts: dayItem.concepts || dayItem.topics || ['Core Review'],
+      status: index === 0 ? 'in-progress' : 'upcoming',
+      resource: dayItem.resource || null,
+      resources: dayItem.resources || [],
+      allTasks,
+    };
+  });
+
+  const completedCount = formattedPlan.filter(p => p.status === 'completed').length;
+  const totalHours = formattedPlan.reduce((sum, p) => sum + parseInt(p.duration), 0);
+
+  return (
+    <section className="relative min-h-screen pt-16 pb-24 px-4">
+      {/* Background effects */}
+      <div className="absolute top-0 right-0 w-96 h-96 bg-orange-600/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-600/5 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative max-w-6xl mx-auto">
+
+        {/* ── HEADER ──────────────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+          className="mb-12"
+        >
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/25 text-orange-400 text-xs font-bold uppercase tracking-widest mb-4">
+                <motion.div className="w-1.5 h-1.5 rounded-full bg-orange-500" animate={{ scale: [1,1.5,1] }} transition={{ duration:1.5, repeat: Infinity }} />
+                AI Generated
+              </div>
+              <h2 className="text-4xl md:text-5xl lg:text-6xl font-black text-white leading-tight">
+                Your{' '}
+                <span className="bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 bg-clip-text text-transparent">
+                  Revision Plan
+                </span>
+              </h2>
+              <p className="mt-3 text-gray-400 text-lg max-w-xl">
+                AI-crafted {formattedPlan.length}-day schedule tailored to your weak areas with curated resources.
+              </p>
+            </div>
+
+            {/* Summary stats */}
+            <div className="flex gap-4 shrink-0">
+              {[
+                { label: 'Days', value: formattedPlan.length, color: 'text-orange-400' },
+                { label: 'Total Hours', value: `${totalHours}h`, color: 'text-purple-400' },
+                { label: 'Topics', value: formattedPlan.length, color: 'text-blue-400' },
+              ].map((s, i) => (
+                <div key={i} className="text-center px-4 py-3 rounded-2xl border border-white/8 bg-white/[0.02]">
+                  <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                  <p className="text-gray-600 text-xs mt-0.5">{s.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── PROGRESS BAND ───────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          className="mb-10 p-4 rounded-2xl border border-white/8 bg-white/[0.02] flex items-center gap-4"
+        >
+          <div className="flex items-center gap-2 shrink-0">
+            <FiTarget className="text-orange-400" size={16} />
+            <span className="text-xs text-gray-400 font-semibold">Progress</span>
+          </div>
+          <div className="flex-1 bg-white/5 rounded-full h-2 overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              whileInView={{ width: `${(completedCount / formattedPlan.length) * 100}%` }}
+              transition={{ duration: 1.2, ease: 'easeOut' }}
+              className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-400"
+              style={{ boxShadow: '0 0 12px rgba(34,197,94,0.4)' }}
+            />
+          </div>
+          <span className="text-xs text-gray-400 shrink-0">{completedCount}/{formattedPlan.length} done</span>
+        </motion.div>
+
+        {/* ── CARDS GRID ──────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {formattedPlan.map((plan, index) => (
+            <DayCard
+              key={index}
+              plan={plan}
+              index={index}
+              isActive={activeIdx === index}
+              onClick={() => setActiveIdx(activeIdx === index ? -1 : index)}
+            />
+          ))}
+        </div>
+
+        {/* ── BOTTOM CTA ──────────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="mt-16 flex flex-col sm:flex-row items-center justify-center gap-4"
+        >
+          <motion.button
+            whileHover={{ scale: 1.05, boxShadow: '0 0 40px rgba(255,107,0,0.5)' }}
+            whileTap={{ scale: 0.97 }}
+            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-orange-600 to-amber-500 text-white font-bold rounded-2xl shadow-xl shadow-orange-600/30 transition-all"
+          >
+            <FiDownload size={18} />
+            Download Plan as PDF
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            className="flex items-center gap-2 px-8 py-4 border-2 border-white/10 text-gray-300 font-bold rounded-2xl hover:border-orange-500/40 hover:text-orange-400 transition-all"
+          >
+            <FiCheckCircle size={18} />
+            Mark Day 1 Complete
+          </motion.button>
+        </motion.div>
+
+      </div>
+    </section>
   );
 }

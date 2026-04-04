@@ -33,331 +33,58 @@ const loadPDFJS = () => {
 };
 
 /**
- * Extract text from PDF file
- * @param {File} file - PDF file to process
- * @returns {Promise<Object>} Extracted text and metadata
+ * Render a PDF page to a high-quality image for OCR
+ * @param {Object} pdf - PDF document object
+ * @param {number} pageNum - Page number to render
+ * @returns {Promise<string>} Data URL of the page image
+ */
+export const renderPDFToImage = (pdf, pageNum) => {
+  return pdf.getPage(pageNum).then((page) => {
+    // Scale 3x for best OCR accuracy on handwritten/printed text
+    const viewport = page.getViewport({ scale: 3.0 });
+
+    const canvas = document.createElement('canvas');
+    canvas.height = viewport.height;
+    canvas.width  = viewport.width;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+
+    return page.render({ canvasContext: context, viewport }).promise.then(() => {
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), 'image/png', 1.0);
+      });
+    });
+  });
+};
+
+/**
+ * Extract text from PDF file (Legacy text extraction)
  */
 export const extractTextFromPDF = async (file) => {
   try {
-    // Validate file type
-    if (file.type !== 'application/pdf') {
-      throw new Error(
-        `Invalid file type: ${file.type}. Expected: application/pdf`
-      );
-    }
-
-    // Validate file size (max 50MB)
-    const maxSize = 50 * 1024 * 1024;
-    if (file.size > maxSize) {
-      throw new Error('PDF file exceeds 50MB limit');
-    }
-
-    // Load pdfjs dynamically
     const pdfjs = await loadPDFJS();
-
-    // Convert file to ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
-
-    // Load PDF document
     const pdf = await pdfjs.getDocument(arrayBuffer).promise;
-    const pageCount = pdf.numPages;
-
-    if (pageCount === 0) {
-      throw new Error('PDF has no pages');
-    }
-
-    // Extract text from all pages
+    
     let fullText = '';
-    const pageTexts = [];
-
-    for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
-      try {
-        const page = await pdf.getPage(pageNum);
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item) => item.str)
-          .join(' ');
-
-        pageTexts.push({
-          pageNumber: pageNum,
-          text: pageText.trim(),
-        });
-
+        const pageText = textContent.items.map(item => item.str).join(' ');
         fullText += pageText + '\n';
-      } catch (pageError) {
-        console.warn(`Error extracting text from page ${pageNum}:`, pageError);
-        pageTexts.push({
-          pageNumber: pageNum,
-          text: '',
-          error: pageError.message,
-        });
-      }
-    }
-
-    // Extract concepts from full text
-    const concepts = extractConceptsFromPDFText(fullText);
-
-    return {
-      fileName: file.name,
-      fileSize: file.size,
-      pageCount: pageCount,
-      extractedText: fullText.trim(),
-      pageTexts: pageTexts,
-      extractedConcepts: concepts,
-      totalCharacters: fullText.length,
-    };
-  } catch (error) {
-    throw new Error(`PDF extraction failed: ${error.message}`);
-  }
-};
-
-/**
- * Extract concepts from PDF text
- * Uses predefined keyword patterns
- * @param {string} text - Extracted PDF text
- * @returns {Array} Array of detected concepts
- */
-const extractConceptsFromPDFText = (text) => {
-  try {
-    const conceptKeywords = {
-      'CPU Scheduling': [
-        'fcfs',
-        'round robin',
-        'time quantum',
-        'scheduling algorithm',
-        'preemptive',
-        'non-preemptive',
-        'burst time',
-        'waiting time',
-        'turnaround time',
-      ],
-      Paging: [
-        'page fault',
-        'frame',
-        'offset',
-        'page table',
-        'virtual address',
-        'physical address',
-        'page replacement',
-        'tlb',
-        'translation',
-      ],
-      Deadlock: [
-        'mutual exclusion',
-        'hold and wait',
-        'circular wait',
-        'no preemption',
-        'deadlock detection',
-        'deadlock prevention',
-        'bankers algorithm',
-        'wait-for graph',
-        'resource allocation',
-      ],
-      'Memory Management': [
-        'memory allocation',
-        'fragmentation',
-        'swapping',
-        'segmentation',
-        'virtual memory',
-        'cache',
-        'memory hierarchy',
-        'resident set',
-      ],
-      'File System': [
-        'inode',
-        'directory',
-        'file allocation',
-        'free space management',
-        'fat',
-        'ext4',
-        'acl',
-        'permission',
-        'file descriptor',
-      ],
-      'Process Management': [
-        'process state',
-        'context switch',
-        'pcb',
-        'process synchronization',
-        'semaphore',
-        'mutex',
-        'critical section',
-        'orphan process',
-      ],
-      'I/O Management': [
-        'interrupt',
-        'dma',
-        'buffering',
-        'spooling',
-        'io controller',
-        'io request',
-        'polling',
-      ],
-      'Filesystem Hierarchy': [
-        'filesystem',
-        'mount point',
-        'root directory',
-        'partition',
-        'block size',
-      ],
-      Synchronization: [
-        'race condition',
-        'thread',
-        'lock',
-        'atomic operation',
-        'monitor',
-        'condition variable',
-      ],
-    };
-
-    const lowerText = text.toLowerCase();
-    const detectedConcepts = [];
-    const conceptSet = new Set();
-
-    for (const [topic, keywords] of Object.entries(conceptKeywords)) {
-      const foundKeywords = [];
-
-      for (const keyword of keywords) {
-        if (lowerText.includes(keyword.toLowerCase())) {
-          foundKeywords.push(keyword);
-          conceptSet.add(topic);
-        }
-      }
-
-      if (foundKeywords.length > 0) {
-        detectedConcepts.push({
-          concept: topic,
-          keywordCount: foundKeywords.length,
-          foundKeywords: foundKeywords,
-        });
-      }
-    }
-
-    // Sort by keyword count (most relevant first)
-    return detectedConcepts.sort((a, b) => b.keywordCount - a.keywordCount);
-  } catch (error) {
-    console.error('Error extracting concepts from PDF:', error);
-    return [];
-  }
-};
-
-/**
- * Extract specific page range from PDF
- * @param {File} file - PDF file
- * @param {number} startPage - Start page number (1-indexed)
- * @param {number} endPage - End page number (1-indexed)
- * @returns {Promise<Object>} Extracted text from page range
- */
-export const extractTextFromPageRange = async (file, startPage, endPage) => {
-  try {
-    if (startPage < 1 || endPage < startPage) {
-      throw new Error('Invalid page range');
-    }
-
-    const pdfjs = await loadPDFJS();
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument(arrayBuffer).promise;
-    const pageCount = pdf.numPages;
-
-    if (endPage > pageCount) {
-      throw new Error(
-        `End page ${endPage} exceeds total pages ${pageCount}`
-      );
-    }
-
-    let rangeText = '';
-    const pageTexts = [];
-
-    for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item) => item.str)
-        .join(' ');
-
-      pageTexts.push({
-        pageNumber: pageNum,
-        text: pageText.trim(),
-      });
-
-      rangeText += pageText + '\n';
     }
 
     return {
       fileName: file.name,
-      startPage,
-      endPage,
-      extractedPages: endPage - startPage + 1,
-      extractedText: rangeText.trim(),
-      pageTexts: pageTexts,
-    };
-  } catch (error) {
-    throw new Error(`Page range extraction failed: ${error.message}`);
-  }
-};
-
-/**
- * Get PDF metadata (page count, file info)
- * @param {File} file - PDF file
- * @returns {Promise<Object>} PDF metadata
- */
-export const getPDFMetadata = async (file) => {
-  try {
-    if (file.type !== 'application/pdf') {
-      throw new Error('Invalid file type');
-    }
-
-    const pdfjs = await loadPDFJS();
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument(arrayBuffer).promise;
-
-    const metadata = await pdf.getMetadata().catch(() => ({}));
-
-    return {
-      fileName: file.name,
-      fileSize: file.size,
       pageCount: pdf.numPages,
-      metadata: metadata,
-      createdAt: new Date().toISOString(),
+      extractedText: fullText.trim(),
+      isDigital: fullText.trim().length > 50 // Threshold for "scanned" check
     };
   } catch (error) {
-    throw new Error(`Metadata extraction failed: ${error.message}`);
-  }
-};
-
-/**
- * Validate PDF file
- * @param {File} file - PDF file to validate
- * @returns {Object} Validation result
- */
-export const validatePDF = (file) => {
-  try {
-    const isValidType = file.type === 'application/pdf';
-    const maxSize = 50 * 1024 * 1024; // 50MB
-    const minSize = 1 * 1024; // 1KB
-    const isValidSize = file.size >= minSize && file.size <= maxSize;
-
-    return {
-      isValid: isValidType && isValidSize,
-      errors: [
-        !isValidType ? `Invalid type: ${file.type}` : '',
-        !isValidSize && file.size < minSize ? 'PDF too small' : '',
-        !isValidSize && file.size > maxSize ? 'PDF too large' : '',
-      ].filter(Boolean),
-      fileSize: file.size,
-      fileType: file.type,
-    };
-  } catch (error) {
-    return {
-      isValid: false,
-      errors: [error.message],
-    };
+    throw new Error(`PDF Load Error: ${error.message}`);
   }
 };
 
 export default {
   extractTextFromPDF,
-  extractTextFromPageRange,
-  getPDFMetadata,
-  validatePDF,
+  renderPDFToImage,
 };

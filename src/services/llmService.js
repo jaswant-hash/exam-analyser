@@ -9,7 +9,7 @@
  */
 const OLLAMA_CONFIG = {
   baseURL: import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11434',
-  model: import.meta.env.VITE_OLLAMA_MODEL || 'llama2',
+  model: import.meta.env.VITE_OLLAMA_MODEL || 'tinyllama',
   timeout: 60000,
   temperature: 0.7,
   topP: 0.9,
@@ -36,27 +36,46 @@ export const generateRevisionPlan = async (weakTopics, recommendations) => {
 
 Student's weak topics: ${topicsText}
 
-Generate a detailed 3-day revision plan with the following structure for each day:
-- Day number and focus area
-- Specific study tasks (2-3 tasks per day)
-- Why each task is important for this student
-- Estimated time to complete each task
-- Key concepts to focus on
-- Practice problems to solve
+Generate a detailed 3-day revision plan.
+Provide the plan as a STRICT JSON array of objects. Each object must represent a day and format exactly like this:
+[
+  {
+    "day": 1,
+    "topic": "Main focus area for the day",
+    "tasks": [
+      { "task": "Specific task 1" },
+      { "task": "Specific task 2" }
+    ],
+    "estimatedHours": 3,
+    "topics": ["Concept 1", "Concept 2"],
+    "resource": {
+      "title": "YouTube Search Query",
+      "type": "YouTube Video",
+      "priority": "High",
+      "prioClass": "text-red-400 border-red-500/30 bg-red-500/20",
+      "url": "https://www.youtube.com/results?search_query=topic+crash+course"
+    }
+  }
+]
 
-Make the plan practical, actionable, and focused on fundamental concepts first.
-Format each day's plan clearly with sections for tasks, focus areas, and estimated times.
-Prioritize fixing foundational gaps before advanced topics.`;
+Make sure the required YouTube search query URL is properly formatted.
+Return JSON ONLY.`;
 
-    const response = await callOllamaAPI(prompt);
+    const response = await callOllamaAPI(prompt, 'json');
 
-    // Parse the LLM response into structured plan
-    const revisionPlan = parseRevisionPlanFromLLM(response);
+    // Clean JSON wrap if it exists
+    const cleanJson = response.includes('[') ? response.substring(response.indexOf('['), response.lastIndexOf(']') + 1) : response;
+    
+    let revisionPlan;
+    try {
+      revisionPlan = JSON.parse(cleanJson);
+    } catch {
+      revisionPlan = generateFallbackRevisionPlan(weakTopics);
+    }
 
     return revisionPlan;
   } catch (error) {
     console.error('LLM revision plan generation error:', error);
-    // Fallback to predefined plan if LLM fails
     return generateFallbackRevisionPlan(weakTopics);
   }
 };
@@ -141,7 +160,7 @@ Format as a structured JSON response with each question as an object.`;
     try {
       return JSON.parse(response);
     } catch {
-      return parseQuuestionsFromText(response);
+      return parseQuestionsFromText(response);
     }
   } catch (error) {
     console.error('Practice questions generation error:', error);
@@ -211,14 +230,19 @@ export const callOllamaAPI = async (prompt, format = null) => {
       requestPayload.format = 'json';
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OLLAMA_CONFIG.timeout);
+
     const response = await fetch(`${OLLAMA_CONFIG.baseURL}/api/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestPayload),
-      timeout: OLLAMA_CONFIG.timeout,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`Ollama API error: ${response.statusText}`);
@@ -362,7 +386,7 @@ const formatRevisionPlan = (text) => {
  * @param {string} text - Raw text
  * @returns {Array} Questions array
  */
-const parseQuuestionsFromText = (text) => {
+const parseQuestionsFromText = (text) => {
   const questions = [];
   const blocks = text.split(/(?=Q\d*:)/i);
 
@@ -378,42 +402,60 @@ const parseQuuestionsFromText = (text) => {
   return questions;
 };
 
-/**
- * Fallback predefined revision plan
- * @param {Array} weakTopics - Weak topics
- * @returns {Array} Fallback plan
- */
 const generateFallbackRevisionPlan = (weakTopics) => {
   const primaryTopic = weakTopics[0]?.topic || 'Core Concepts';
 
   return [
     {
       day: 1,
+      topic: `Review fundamental principles of ${primaryTopic}`,
       tasks: [
-        { task: `Review fundamental principles of ${primaryTopic}`, order: 0 },
-        { task: 'Watch recommended video lectures', order: 1 },
-        { task: 'Create mind map of key terms', order: 2 },
+        { task: 'Watch recommended video lectures' },
+        { task: 'Create mind map of key terms' },
       ],
-      reason: 'Building a strong foundation is crucial for all advanced topics.',
       estimatedHours: 3,
+      topics: [primaryTopic, 'Fundamentals'],
+      resource: {
+        title: `${primaryTopic} Crash Course`,
+        type: 'YouTube Video',
+        priority: 'High',
+        prioClass: 'text-red-400 border-red-500/30 bg-red-500/20',
+        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(primaryTopic + ' course')}`
+      }
     },
     {
       day: 2,
+      topic: 'Practice problems and examples',
       tasks: [
-        { task: 'Solve practice problems from recommendations', order: 0 },
-        { task: 'Review incorrect answers from exam', order: 1 },
+        { task: 'Solve practice problems from references' },
+        { task: 'Review incorrect answers from exam' },
       ],
-      reason: 'Active recall and practice solidify understanding.',
       estimatedHours: 3,
+      topics: ['Active Recall', 'Problem Solving'],
+      resource: {
+        title: `${primaryTopic} Practice Exercises`,
+        type: 'Web Resource',
+        priority: 'Medium',
+        prioClass: 'text-orange-400 border-orange-500/30 bg-orange-500/20',
+        url: `https://www.google.com/search?q=${encodeURIComponent(primaryTopic + ' practice questions')}`
+      }
     },
     {
       day: 3,
+      topic: 'Final assessment and mock test',
       tasks: [
-        { task: 'Take a mock test on weak areas', order: 0 },
-        { task: 'Review cheat sheets and quick notes', order: 1 },
+        { task: 'Take a mock test on weak areas' },
+        { task: 'Review cheat sheets and quick notes' },
       ],
-      reason: 'Final assessment to ensure gaps are closed before the next exam.',
       estimatedHours: 2,
+      topics: ['Assessment', 'Review'],
+      resource: {
+        title: `${primaryTopic} Cheat Sheet`,
+        type: 'Quick Guide',
+        priority: 'Medium',
+        prioClass: 'text-blue-400 border-blue-500/30 bg-blue-500/20',
+        url: `https://www.google.com/search?q=${encodeURIComponent(primaryTopic + ' cheat sheet pdf')}`
+      }
     },
   ];
 };
@@ -430,14 +472,19 @@ export const generateEmbedding = async (text) => {
       prompt: text,
     };
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OLLAMA_CONFIG.timeout || 30000);
+
     const response = await fetch(`${OLLAMA_CONFIG.baseURL}/api/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestPayload),
-      timeout: OLLAMA_CONFIG.timeout,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`API error HTTP ${response.status}: ${response.statusText}`);

@@ -1,288 +1,106 @@
 /**
- * Firebase Service
- * Handles all Firestore and Storage operations
- * Manages test attempts, revision plans, and weakness reports
+ * Firebase Service — User-scoped course data
+ * All data is stored under users/{uid}/courses/{courseId}
  */
 
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import {
-  getFirestore,
-  collection,
-  addDoc,
-  query,
-  where,
-  orderBy,
-  getDocs,
-  getDoc,
-  doc,
-  Timestamp,
+  getFirestore, collection, addDoc, getDocs, getDoc,
+  doc, Timestamp, query, orderBy, deleteDoc, updateDoc,
 } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getAuth } from 'firebase/auth';
 
-// Firebase configuration (replace with your actual config)
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'YOUR_API_KEY',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'YOUR_AUTH_DOMAIN',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'YOUR_PROJECT_ID',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'YOUR_STORAGE_BUCKET',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || 'YOUR_SENDER_ID',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || 'YOUR_APP_ID',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase
-let app;
-let db;
-let storage;
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+export const db = getFirestore(app);
+export const auth = getAuth(app);
 
-try {
-  app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  storage = getStorage(app);
-} catch (error) {
-  console.error('Firebase initialization error:', error);
+/** Helper — get current user's UID (throws if not authed) */
+function getUID() {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error('User not authenticated');
+  return uid;
 }
 
 /**
- * Save a test attempt to Firestore
- * @param {string} studentName - Student identifier
- * @param {string} studentEmail - Student email
- * @param {Object} testData - Test data object
- * @returns {Promise<string>} Document ID
+ * Save a complete course analysis result for the current user.
+ * @param {string} courseName - Name entered by user (e.g. "DBMS")
+ * @param {Object} analysisData - Full analysis payload
+ * @returns {Promise<string>} courseId
  */
-export const saveTestAttempt = async (
-  studentName,
-  studentEmail,
-  testData
-) => {
-  try {
-    const testDocument = {
-      studentName,
-      studentEmail,
-      uploadedAt: Timestamp.now(),
-      fileType: testData.fileType || 'csv',
-      rawData: testData.rawData || {},
-      scores: testData.scores || {},
-      weakConcepts: testData.weakConcepts || [],
-      missingConcepts: testData.missingConcepts || [],
-      recommendations: testData.recommendations || [],
-      revisionPlan: testData.revisionPlan || [],
-      overallScore: testData.overallScore || 0,
-      totalMarksObtained: testData.totalMarksObtained || 0,
-      totalMarksAvailable: testData.totalMarksAvailable || 0,
-      confidenceScore: testData.confidenceScore || 0,
-      status: 'completed',
-      updatedAt: Timestamp.now(),
-    };
-
-    const docRef = await addDoc(
-      collection(db, 'testAttempts'),
-      testDocument
-    );
-
-    return docRef.id;
-  } catch (error) {
-    console.error('Error saving test attempt:', error);
-    throw new Error(`Failed to save test attempt: ${error.message}`);
-  }
+export const saveCourseAnalysis = async (courseName, analysisData) => {
+  const uid = getUID();
+  const docRef = await addDoc(collection(db, 'users', uid, 'courses'), {
+    courseName,
+    uploadedAt: Timestamp.now(),
+    score: analysisData.score || 0,
+    totalTopics: analysisData.totalTopics || 0,
+    gapCount: analysisData.gapCount || 0,
+    coveredCount: analysisData.coveredCount || 0,
+    overallFeedback: analysisData.overallFeedback || '',
+    topicResults: analysisData.topicResults || [],
+    weakTopics: analysisData.weakTopics || [],
+    coveredTopics: analysisData.coveredTopics || [],
+    missingConcepts: analysisData.missingConcepts || [],
+    recommendations: analysisData.recommendations || [],
+    revisionPlan: analysisData.revisionPlan || [],
+  });
+  return docRef.id;
 };
 
 /**
- * Fetch all previous test attempts for a student
- * @param {string} studentEmail - Student email
- * @returns {Promise<Array>} Array of test attempts
+ * Fetch all courses for the current user, ordered by upload date desc.
+ * @returns {Promise<Array>} list of { id, courseName, uploadedAt, score, ... }
  */
-export const fetchPreviousAttempts = async (studentEmail) => {
-  try {
-    const q = query(
-      collection(db, 'testAttempts'),
-      where('studentEmail', '==', studentEmail),
-      orderBy('uploadedAt', 'desc')
-    );
-
-    const querySnapshot = await getDocs(q);
-    const attempts = [];
-
-    querySnapshot.forEach((doc) => {
-      attempts.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    return attempts;
-  } catch (error) {
-    console.error('Error fetching previous attempts:', error);
-    throw new Error(`Failed to fetch previous attempts: ${error.message}`);
-  }
+export const fetchUserCourses = async () => {
+  const uid = getUID();
+  const q = query(collection(db, 'users', uid, 'courses'), orderBy('uploadedAt', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };
 
 /**
- * Fetch a specific test attempt by ID
- * @param {string} attemptId - Document ID
- * @returns {Promise<Object>} Test attempt data
+ * Fetch a single course by its Firestore ID.
+ * @param {string} courseId
  */
+export const fetchCourseById = async (courseId) => {
+  const uid = getUID();
+  const snap = await getDoc(doc(db, 'users', uid, 'courses', courseId));
+  if (!snap.exists()) throw new Error('Course not found');
+  return { id: snap.id, ...snap.data() };
+};
+
+/**
+ * Delete a course.
+ */
+export const deleteCourse = async (courseId) => {
+  const uid = getUID();
+  await deleteDoc(doc(db, 'users', uid, 'courses', courseId));
+};
+
+// ── Legacy helpers kept for compatibility ──────────────
+
+export const saveTestAttempt = async (studentName, studentEmail, testData) => {
+  const uid = auth.currentUser?.uid || 'anonymous';
+  const docRef = await addDoc(collection(db, 'testAttempts'), {
+    uid, studentName, studentEmail, uploadedAt: Timestamp.now(), ...testData,
+  });
+  return docRef.id;
+};
+
 export const fetchTestAttemptById = async (attemptId) => {
-  try {
-    if (!attemptId) throw new Error('Attempt ID is required');
-    const docRef = doc(db, 'testAttempts', attemptId);
-    const docSnap = await getDoc(docRef);
-    
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() };
-    } else {
-      throw new Error('Test attempt not found');
-    }
-  } catch (error) {
-    console.error('Error fetching test attempt:', error);
-    throw new Error(`Failed to fetch test attempt: ${error.message}`);
-  }
+  const snap = await getDoc(doc(db, 'testAttempts', attemptId));
+  if (!snap.exists()) throw new Error('Not found');
+  return { id: snap.id, ...snap.data() };
 };
 
-/**
- * Save revision plan to Firestore
- * @param {string} studentEmail - Student email
- * @param {string} testAttemptId - Reference to test attempt
- * @param {Array} revisionPlan - Revision plan array
- * @returns {Promise<string>} Document ID
- */
-export const saveRevisionPlan = async (
-  studentEmail,
-  testAttemptId,
-  revisionPlan
-) => {
-  try {
-    const planDocument = {
-      studentEmail,
-      testAttemptId,
-      createdAt: Timestamp.now(),
-      plan: revisionPlan,
-      status: 'active',
-      completedDays: [],
-      updatedAt: Timestamp.now(),
-    };
-
-    const docRef = await addDoc(
-      collection(db, 'revisionPlans'),
-      planDocument
-    );
-
-    return docRef.id;
-  } catch (error) {
-    console.error('Error saving revision plan:', error);
-    throw new Error(`Failed to save revision plan: ${error.message}`);
-  }
-};
-
-/**
- * Save weakness report to Firestore
- * @param {string} studentEmail - Student email
- * @param {string} testAttemptId - Reference to test attempt
- * @param {Object} weaknessReport - Weakness report object
- * @returns {Promise<string>} Document ID
- */
-export const saveWeaknessReport = async (
-  studentEmail,
-  testAttemptId,
-  weaknessReport
-) => {
-  try {
-    const reportDocument = {
-      studentEmail,
-      testAttemptId,
-      createdAt: Timestamp.now(),
-      weakTopics: weaknessReport.weakTopics || [],
-      missingConcepts: weaknessReport.missingConcepts || [],
-      confidenceScore: weaknessReport.confidenceScore || 0,
-      detailedAnalysis: weaknessReport.detailedAnalysis || {},
-      recommendations: weaknessReport.recommendations || [],
-      updatedAt: Timestamp.now(),
-    };
-
-    const docRef = await addDoc(
-      collection(db, 'weaknessReports'),
-      reportDocument
-    );
-
-    return docRef.id;
-  } catch (error) {
-    console.error('Error saving weakness report:', error);
-    throw new Error(`Failed to save weakness report: ${error.message}`);
-  }
-};
-
-/**
- * Fetch weakness reports for a student
- * @param {string} studentEmail - Student email
- * @returns {Promise<Array>} Array of weakness reports
- */
-export const fetchWeaknessReports = async (studentEmail) => {
-  try {
-    const q = query(
-      collection(db, 'weaknessReports'),
-      where('studentEmail', '==', studentEmail),
-      orderBy('createdAt', 'desc')
-    );
-
-    const querySnapshot = await getDocs(q);
-    const reports = [];
-
-    querySnapshot.forEach((doc) => {
-      reports.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    return reports;
-  } catch (error) {
-    console.error('Error fetching weakness reports:', error);
-    throw new Error(`Failed to fetch weakness reports: ${error.message}`);
-  }
-};
-
-/**
- * Upload file to Firebase Storage
- * @param {File} file - File to upload
- * @param {string} studentEmail - Student email
- * @param {string} fileType - Type of file (csv, image, pdf)
- * @returns {Promise<string>} Download URL of uploaded file
- */
-export const uploadFileToStorage = async (file, studentEmail, fileType) => {
-  try {
-    const timestamp = Date.now();
-    const fileName = `${studentEmail}/${fileType}/${timestamp}_${file.name}`;
-    const storageRef = ref(storage, fileName);
-
-    await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(storageRef);
-
-    return downloadURL;
-  } catch (error) {
-    console.error('Error uploading file to storage:', error);
-    throw new Error(`Failed to upload file: ${error.message}`);
-  }
-};
-
-/**
- * Get Firestore instance
- * @returns {Object} Firestore instance
- */
-export const getDB = () => db;
-
-/**
- * Get Storage instance
- * @returns {Object} Storage instance
- */
-export const getStorageInstance = () => storage;
-
-export default {
-  saveTestAttempt,
-  fetchPreviousAttempts,
-  fetchTestAttemptById,
-  saveRevisionPlan,
-  saveWeaknessReport,
-  fetchWeaknessReports,
-  uploadFileToStorage,
-  getDB,
-  getStorageInstance,
-};
+export { app };
+export default { saveCourseAnalysis, fetchUserCourses, fetchCourseById, deleteCourse };
